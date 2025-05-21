@@ -40,9 +40,10 @@ public class PointService {
     public UserPoint charge(long id, long amount) {
 
         // 등록된 사용자가 있는지 조회
-        UserPoint currentUser = userPointTable.selectById(id);
+        UserPoint currentUserPoint = userPointTable.selectById(id);
+        UserPoint validUserPoint = currentUserPoint.charge(amount);
 
-        UserPoint result = userPointTable.insertOrUpdate(currentUser.id(), currentUser.point() + amount);
+        UserPoint result = userPointTable.insertOrUpdate(validUserPoint.id(), validUserPoint.point());
         pointHistoryTable.insert(id, amount, TransactionType.CHARGE, System.currentTimeMillis());
 
         return result;
@@ -56,11 +57,12 @@ public class PointService {
      */
     public UserPoint use(long id, long usePoint) {
 
-        // 등록된 사용자기 있는지 조회
+        // 등록된 사용자가 있는지 조회
         UserPoint currentUserPoint = userPointTable.selectById(id);
+        UserPoint validUserPoint = currentUserPoint.use(usePoint);
 
-        UserPoint result = userPointTable.insertOrUpdate(currentUserPoint.id(), currentUserPoint.point() - usePoint);
-        pointHistoryTable.insert(id, usePoint, TransactionType.USE, System.currentTimeMillis());
+        UserPoint result = userPointTable.insertOrUpdate(validUserPoint.id(), validUserPoint.point());
+        pointHistoryTable.insert(validUserPoint.id(), validUserPoint.point(), TransactionType.USE, System.currentTimeMillis());
 
         return result;
     }
