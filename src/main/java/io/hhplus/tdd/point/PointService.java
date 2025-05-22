@@ -3,6 +3,7 @@ package io.hhplus.tdd.point;
 import io.hhplus.tdd.database.PointHistoryTable;
 import io.hhplus.tdd.database.UserPointTable;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -12,6 +13,7 @@ public class PointService {
 
     private final UserPointTable userPointTable;
     private final PointHistoryTable pointHistoryTable;
+    private final UserPointLockManager lockManager;
 
     /**
      * 포인트 조회
@@ -39,14 +41,22 @@ public class PointService {
      */
     public UserPoint charge(long id, long amount) {
 
-        // 등록된 사용자가 있는지 조회
-        UserPoint currentUserPoint = userPointTable.selectById(id);
-        UserPoint validUserPoint = currentUserPoint.charge(amount);
+        ReentrantLock lock = lockManager.getLock(id);
+        lock.lock();
+        try {
+            // 등록된 사용자가 있는지 조회
+            UserPoint currentUserPoint = userPointTable.selectById(id);
+            UserPoint validUserPoint = currentUserPoint.charge(amount);
 
-        UserPoint result = userPointTable.insertOrUpdate(validUserPoint.id(), validUserPoint.point());
-        pointHistoryTable.insert(id, amount, TransactionType.CHARGE, System.currentTimeMillis());
+            UserPoint result = userPointTable.insertOrUpdate(validUserPoint.id(), validUserPoint.point());
+            pointHistoryTable.insert(id, amount, TransactionType.CHARGE, System.currentTimeMillis());
 
-        return result;
+            return result;
+        } finally {
+            lock.unlock();
+        }
+
+
     }
 
     /**
@@ -57,13 +67,22 @@ public class PointService {
      */
     public UserPoint use(long id, long usePoint) {
 
-        // 등록된 사용자가 있는지 조회
-        UserPoint currentUserPoint = userPointTable.selectById(id);
-        UserPoint validUserPoint = currentUserPoint.use(usePoint);
+        ReentrantLock lock = lockManager.getLock(id);
+        lock.lock();
 
-        UserPoint result = userPointTable.insertOrUpdate(validUserPoint.id(), validUserPoint.point());
-        pointHistoryTable.insert(validUserPoint.id(), validUserPoint.point(), TransactionType.USE, System.currentTimeMillis());
+        try{
+            // 등록된 사용자가 있는지 조회
+            UserPoint currentUserPoint = userPointTable.selectById(id);
+            UserPoint validUserPoint = currentUserPoint.use(usePoint);
 
-        return result;
+            UserPoint result = userPointTable.insertOrUpdate(validUserPoint.id(), validUserPoint.point());
+            pointHistoryTable.insert(validUserPoint.id(), usePoint, TransactionType.USE, System.currentTimeMillis());
+
+            return result;
+        }finally {
+            lock.unlock();
+        }
+
+
     }
 }
