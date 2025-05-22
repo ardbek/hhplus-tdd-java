@@ -3,7 +3,6 @@ package io.hhplus.tdd.point;
 import static io.hhplus.tdd.point.TransactionType.CHARGE;
 import static io.hhplus.tdd.point.TransactionType.USE;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.assertj.core.api.AssertionsForClassTypes.tuple;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -12,7 +11,7 @@ import static org.mockito.BDDMockito.given;
 import io.hhplus.tdd.database.PointHistoryTable;
 import io.hhplus.tdd.database.UserPointTable;
 import java.util.List;
-import net.bytebuddy.implementation.bytecode.Throw;
+import java.util.concurrent.locks.ReentrantLock;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +30,9 @@ public class PointServiceTest {
 
     @Mock
     PointHistoryTable pointHistoryTable;
+
+    @Mock
+    UserPointLockManager lockManager;
 
     /**
      * 유저 포인트 조회 단위 테스트
@@ -94,8 +96,8 @@ public class PointServiceTest {
     @DisplayName("유저가 포인트를 충전한다.")
     void charge() {
         //given
-        long userId = 1L;
-        long amount = 1000L;
+        final long userId = 1L;
+        final long amount = 1000L;
 
         UserPoint beforeCharge = new UserPoint(userId, amount, System.currentTimeMillis());
         UserPoint afterCharge = new UserPoint(userId, beforeCharge.point() + amount,
@@ -103,6 +105,7 @@ public class PointServiceTest {
 
         given(userPointTable.selectById(anyLong())).willReturn(beforeCharge);
         given(userPointTable.insertOrUpdate(anyLong(), anyLong())).willReturn(afterCharge);
+        given(lockManager.getLock(anyLong())).willReturn(new ReentrantLock(true));
 
         //when
         UserPoint result = pointService.charge(userId, amount);
@@ -117,12 +120,13 @@ public class PointServiceTest {
     @DisplayName("100,000 포인트 이상 충전하면 예외가 발생한다.")
     void charge_throwsException_whenExceedsMaxPoint() {
         // given
-        long userId = 1L;
-        long amount = 100_000L;
-        long chargePoint = 1000L;
+        final long userId = 1L;
+        final long amount = 100_000L;
+        final long chargePoint = 1000L;
 
         UserPoint userPoint = new UserPoint(userId, amount, System.currentTimeMillis());
         given(userPointTable.selectById(anyLong())).willReturn(userPoint);
+        given(lockManager.getLock(anyLong())).willReturn(new ReentrantLock(true));
 
         // when
         Throwable throwable = catchThrowable(() -> pointService.charge(userId, chargePoint));
@@ -132,6 +136,27 @@ public class PointServiceTest {
             .hasMessageContaining("보유할 수 있는 최대 포인트는 100,000 포인트 입니다.");
     }
 
+    @Test
+    @DisplayName("1 포인트 미만 금액을 충전하면 예외가 발생한다")
+    void charge_throwsException_whenExceedsMinPoint() {
+        // given
+        final long userId = 1L;
+        final long amount = 1000L;
+        final long chargePoint = 0;
+
+        UserPoint userPoint = new UserPoint(userId, amount, System.currentTimeMillis());
+        given(userPointTable.selectById(anyLong())).willReturn(userPoint);
+        given(lockManager.getLock(anyLong())).willReturn(new ReentrantLock(true));
+
+        // when
+        Throwable throwable = catchThrowable(() -> pointService.charge(userId, chargePoint));
+
+        // then
+        assertThat(throwable).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("포인트 충전은 1 Point 이상 충전 가능합니다.");
+
+    }
+
     /**
      * 포인트 사용 단위 테스트
      */
@@ -139,9 +164,9 @@ public class PointServiceTest {
     @DisplayName("유저가 포인트를 사용한다.")
     void use() {
         // given
-        long userId = 1L;
-        long amount = 5000L;
-        long usePoint = 1000L;
+        final long userId = 1L;
+        final long amount = 5000L;
+        final long usePoint = 1000L;
 
         UserPoint beforeUse = new UserPoint(userId, amount,
             System.currentTimeMillis());// 사용 전 유저 정보
@@ -150,6 +175,7 @@ public class PointServiceTest {
 
         given(userPointTable.selectById(anyLong())).willReturn(beforeUse);
         given(userPointTable.insertOrUpdate(anyLong(), anyLong())).willReturn(afterUse);
+        given(lockManager.getLock(anyLong())).willReturn(new ReentrantLock(true));
 
         // when
         UserPoint usedUserPoint = pointService.use(beforeUse.id(), usePoint);
@@ -163,12 +189,13 @@ public class PointServiceTest {
     @DisplayName("사용 포인트가 보유중인 포인트보다 많으면 예외가 발생한다.")
     void use_throwsException_whenAmountExceedsBalance() {
         // given
-        long userId = 1L;
-        long amount = 1000L;
-        long usePoint = 3000L;
+        final long userId = 1L;
+        final long amount = 1000L;
+        final long usePoint = 3000L;
 
         UserPoint currentUserPoint = new UserPoint(userId, amount, System.currentTimeMillis());
         given(userPointTable.selectById(anyLong())).willReturn(currentUserPoint);
+        given(lockManager.getLock(anyLong())).willReturn(new ReentrantLock(true));
 
         // when
         Throwable throwable = catchThrowable(() -> pointService.use(userId, usePoint));
@@ -180,22 +207,23 @@ public class PointServiceTest {
     }
 
     @Test
-    @DisplayName("사용 포인트가 0인 경우 예외가 발생한다.")
+    @DisplayName("1포인트 미만 금액을 충전하면 예외가 발생한다.")
     void use_throwsException_whenBalanceIsZero() {
         // given
-        long userId = 1L;
-        long amount = 0;
-        long usePoint = 3000L;
+        final long userId = 1L;
+        final long amount = 3000;
+        final long usePoint = 0L;
 
         UserPoint currentUserPoint = new UserPoint(userId, amount, System.currentTimeMillis());
         given(userPointTable.selectById(anyLong())).willReturn(currentUserPoint);
+        given(lockManager.getLock(anyLong())).willReturn(new ReentrantLock(true));
 
         // when
         Throwable throwable = catchThrowable(() -> pointService.use(userId, usePoint));
 
         // then
         assertThat(throwable).isInstanceOf(Exception.class)
-            .hasMessageContaining("사용할 포인트가 올바르지 않습니다.");
+            .hasMessageContaining("포인트 사용은 1 Point 이상 사용 가능합니다.");
 
     }
 
